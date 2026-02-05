@@ -2,7 +2,7 @@ import os
 import json
 from datetime import datetime
 from colorama import Fore, Style, init
-from assistant import Controller
+from assistant import SemanticController
 from memory_manager import MemoryManager
 
 
@@ -17,7 +17,7 @@ init(autoreset=True)
 
 class Main:
     def __init__(self):
-        self.llm = Controller()
+        self.llm = SemanticController()
         self.memory = MemoryManager()
         self.short_term_memory = [] # Keeps track of the current session context
 

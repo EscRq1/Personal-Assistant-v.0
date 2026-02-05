@@ -1,6 +1,8 @@
 import requests
 import datetime
 import socket
+import os
+import numpy as np
 from tools.web_search import search_web, fetch_page_text, is_online
 
 class Controller:
@@ -23,69 +25,6 @@ class Controller:
             "CODER": 16384
         }
 
-        
-  
-
-    def is_action_feedback(self, user_input) -> bool:
-        feedback_phrases = {
-            "thank you",
-            "thanks",
-            "that helps",
-            "that really helps",
-            "nice",
-            "cool",
-            "got it",
-            "makes sense",
-            "i see",
-            "interesting"
-        }
-        text_l = user_input.lower()
-
-        return any(p in text_l for p in feedback_phrases)
-
-    
-
-    def is_obvious_code_request(self, text: str) -> bool:
-        code_action_verbs = {
-            "write", "implement", "create", "build",
-            "generate", "code", "program", "develop", "script",
-            "debug", "fix"
-        }
-        code_domain_terms = {
-            "golang", "go", "python", "c++", "java", "rust",
-            "javascript", "js", "typescript", "ts",
-            "electron", "react", "node", "api", "class", "function",
-            "calculator", "gui", "frontend", "backend"
-
-        }
-        text_l = text.lower()
-
-        has_action = any(v in text_l for v in code_action_verbs)
-        has_domain = any(d in text_l for d in code_domain_terms)
-
-        def starts_with_verb(text: str) -> bool:
-            return text.strip().split()[0].lower() in code_action_verbs
-
-        return has_domain and (has_action or starts_with_verb(text))
-
-    def is_code_followup(self, text: str) -> bool:
-
-        followup_code_phrases = {
-            "same task",
-            "same thing",
-            "same but",
-            "what about",
-            "now in",
-            "but in",
-            "in rust",
-            "in python",
-            "in go",
-            "in java",
-            "in js",
-            "in cpp",
-        }
-        text_l = text.lower()
-        return any(p in text_l for p in followup_code_phrases)
 
 
 
@@ -114,62 +53,6 @@ class Controller:
         except Exception as e:
             return f"Error: {e}"
 
-    def get_intent(self, user_input) -> str:
-        rule_intent = None
-        text_l = user_input.lower()
-
-        # Use temperature 0.1 for strict, fast classification
-        if self.is_obvious_code_request(user_input):
-            intent = "CODE"
-            last_intent = "CODE"
-            return intent
-        elif self.last_intent  == "CODE" and self.is_code_followup(user_input) :
-            rule_intent = "CODE"   # hint only, not a decision
-        else:
-            rule_intent = "RESEARCH"
-
-        def clean_input(text: str) -> str:
-            return text.lstrip("!?,. ").split("\n")[0].split(" ", 1)[-1] if text.lower().startswith(("hello", "hi ", "hey")) else text
-
-        
-        is_feedback = "YES" if self.is_action_feedback(user_input) else "NO"
-        
-        router_prompt = (
-            "You are an intent router.\n"
-            "Output ONE word only: CODE or RESEARCH.\n\n"
-            f"User input:\n{clean_input(user_input)}\n\n"
-            f"Previous intent: {self.last_intent or 'NONE'}\n"
-            f"Rule-based suggestion: {rule_intent or 'NONE'}\n"
-            f"Signal: feedback_or_acknowledgment={is_feedback}\n\n"
-            "Policy:\n"
-            "- The rule-based suggestion is the default decision.\n"
-            "- Override the rule-based suggestion ONLY if it is CLEARLY wrong.\n"
-            "- If you are uncertain, keep the rule-based suggestion.\n\n"
-            "Definitions:\n"
-            "- CODE = user wants code OR technical implementation details (GUI/app, Electron, API, debugging, scripts, setup).\n"
-            "- RESEARCH = explanations, discussion, advice, planning without code.\n\n"
-            "Hard rules:\n"
-            "- If message is ONLY thanks/ok/feedback with no new request -> RESEARCH.\n"
-            "- If mixed feedback + new request -> classify the request part.\n\n"
-            "- Ignore all the user politenes (Can you, Please, etc.) and greetings(hello, hi, hey)"
-            "Repty with ONE word only\n\n"
-        )
-
-        
-        
-        decision = self._call_ollama(self.router_model, router_prompt, target_temp = self.temps["ROUTER"], target_context = self.context_size["ROUTER"])
-        intent = decision.strip().upper()
-
-        if rule_intent and rule_intent != intent:
-            print(f"[Router Override] Rule={rule_intent} → LLM={intent}")
-
-        if intent not in {"CODE", "RESEARCH"}:
-            intent = rule_intent or "RESEARCH"
-
-
-        self.last_intent = intent
-
-        return intent
 
     def ask(self, prompt: str, system_prompt=None, intent="RESEARCH") -> str:
         """Routes to the specialist model based on intent."""
@@ -232,3 +115,133 @@ class Controller:
             return ""
 
         return "\n\n".join(context_chunks)
+
+
+
+# No 'import ollama' needed!
+
+class SemanticController(Controller):
+    def __init__(self):
+        super().__init__()
+        # 1. Configuration
+        self.embed_url = "http://localhost:11434/api/embed"
+        self.embed_model = "nomic-embed-text"
+        self.cache_file = "intent_anchors.npy"
+        
+        # Prototype examples for each intent
+        self.raw_anchors = {
+            "CODE": [
+                # Creation
+                "write", "implement", "create", "build",
+                "generate", "code", "program", "develop", "script",
+                "debug", "fix"
+                # Modification (Crucial for follow-ups!)
+                "make it faster", "refactor this", 
+                "same task",
+                "same thing",
+                "same but",
+                "what about",
+                "now in",
+                "but in",
+                # Debugging
+                "debug error", "fix the bug", "why is it crashing"
+            ],
+            "RESEARCH": [
+                # Knowledge
+                "explain concept", "how does this work", "tell me about", "find some information", "search for it"
+                # Conversational / Feedback (The missing link)
+                "thank you",
+                "thanks",
+                "that helps",
+                "that really helps",
+                "nice",
+                "cool",
+                "got it",
+                "makes sense",
+                "i see",
+                "interesting"
+            ]
+        }
+
+        # 2. Boot Optimization (Persistence)
+        if os.path.exists(self.cache_file):
+            print(" [System] Loading semantic anchors from cache...")
+            self.anchor_vectors = np.load(self.cache_file, allow_pickle=True).item()
+        else:
+            print(" [System] No cache found. Generating new anchors...")
+            self._generate_and_save_anchors()
+        
+        self.last_intent = "RESEARCH" # Default context
+
+    def _get_embeddings(self, input_data):
+        """Standardized wrapper for Ollama's /api/embed endpoint."""
+        # Ollama expects 'input' to be a string or a list of strings
+        payload = {"model": self.embed_model, "input": input_data}
+        try:
+            response = requests.post(self.embed_url, json=payload, timeout=10)
+            response.raise_for_status()
+            vectors = response.json().get("embeddings")
+            
+            if not vectors:
+                print(f" [!] API returned no embeddings for: {input_data[:20]}...")
+                return None
+            return vectors
+        except Exception as e:
+            print(f" [!] Embedding Error: {e}")
+            return None
+
+    def _generate_and_save_anchors(self):
+        self.anchor_vectors = {}
+        for intent, phrases in self.raw_anchors.items():
+            print(f" -> Creating centroid for {intent}...")
+            vectors = self._get_embeddings(phrases)
+            
+            if vectors:
+                # Calculate the "Centroid" (Average vector for this category)
+                centroid = np.mean(vectors, axis=0)
+                # Validation: Magnitude check
+                mag = np.linalg.norm(centroid)
+                if mag == 0:
+                    print(f" [!!!] Warning: {intent} centroid is a zero vector!")
+                
+                self.anchor_vectors[intent] = centroid
+            else:
+                self.anchor_vectors[intent] = np.zeros(768)
+        
+        np.save(self.cache_file, self.anchor_vectors)
+        print(f" [Success] Cached anchors to {self.cache_file}")
+
+    def _cosine_similarity(self, a, b):
+        """Calculates distance in vector space."""
+        norm_a = np.linalg.norm(a)
+        norm_b = np.linalg.norm(b)
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return np.dot(a, b) / (norm_a * norm_b)
+
+    def get_intent(self, user_input) -> str:
+        # Get vector for user input (returns a list of lists, we take the first)
+        result = self._get_embeddings(user_input)
+        if not result:
+            return self.last_intent
+            
+        input_vec = result[0]
+        
+        # Calculate similarity scores against our anchor centroids
+        scores = {intent: self._cosine_similarity(input_vec, anchor) 
+                  for intent, anchor in self.anchor_vectors.items()}
+        
+        # Find winner
+        best_intent = max(scores, key=scores.get)
+        confidence = scores[best_intent]
+
+        # --- Threshold Logic ---
+        # If the confidence is too low, we stick to the last intent 
+        # (This handles follow-ups like "make it better" or "thanks")
+        if confidence < 0.45:
+            print(f" [Router] Ambiguous ({confidence:.2f}). Defaulting to: {self.last_intent}")
+            return self.last_intent
+
+        self.last_intent = best_intent
+        print(f" [Router] Selected: {best_intent} ({confidence:.2f})")
+        return best_intent
