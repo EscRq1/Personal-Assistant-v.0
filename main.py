@@ -6,6 +6,7 @@ from assistant import SemanticController
 from memory_manager import MemoryManager
 
 
+
 # Initialize Colorama for Windows terminal colors
 init(autoreset=True)
 
@@ -39,10 +40,6 @@ class Main:
 
     def auto_update_profile(self, user_input: str, assistant_response: str):
 
-        IDENTITY_TRIGGERS = (
-            "my name is", "i am ", "i'm ", "i study", "i'm studying",
-            "i work", "my goal", "i live", "based in"
-        )
 
         ALLOWED_PROFILE_FIELDS = {
             "Name",
@@ -89,12 +86,9 @@ class Main:
             return
         if self.llm.last_intent == "CODE":
             return
-        text_l = user_input.lower()
-        if not any(t in text_l for t in IDENTITY_TRIGGERS):
-                return
 
         raw = self.llm._call_ollama(
-            self.llm.router_model,
+            self.llm.assistant_model,
             extraction_prompt,
             target_temp=0.0
         ).strip()
@@ -150,9 +144,12 @@ class Main:
                 if not user_input: continue
 
                 intent = self.llm.get_intent(user_input)
-                print(f"{Fore.BLUE}[Router: {intent} mode]{Style.RESET_ALL}")
+                if intent in ("CODE", "DEBUG", "MATH", "TECHNICAL"):
+                    print(f"{Fore.BLUE}[Router: CODER mode]{Style.RESET_ALL}")
+                else:
+                    print(f"{Fore.BLUE}[Router: ASSISTANT mode]{Style.RESET_ALL}")
 
-                                # 1. Fetch raw data from both collections
+                # 1. Fetch raw data from both collections
 
 
                 context_data = self.memory.get_raw_context(user_input, k=15)
@@ -218,7 +215,7 @@ class Main:
                 tashkent_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S GMT+5")
                 tashkent_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S GMT+5")
 
-                role = "Expert Programmer" if "CODE" in intent else "Personal Research Assistant"
+                role = "Expert Programmer" if intent in ("CODE", "DEBUG") else "Personal Assistant"
                 system_prompt = (
                     "### CORE IDENTITY (READ THIS FIRST) ###\n"
                     f"{user_profile if user_profile else 'User is a new contact.'}\n\n"

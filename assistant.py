@@ -7,21 +7,18 @@ from tools.web_search import search_web, fetch_page_text, is_online
 
 class Controller:
     def __init__(self, model_name="qwen3:7b"):      
-        self.router_model = "qwen2.5:0.5b"
-        self.researcher_model = "qwen2.5:7b"     # Generalist
-        self.coder_model = "qwen3-coder:30b"    # Coding specialist
+        self.assistant_model = "qwen2.5:7b"     # Generalist
+        self.coder_model = "qwen3-coder:30b"      # Coding specialist
         self.url = "http://localhost:11434/api/generate"
         self.last_intent = None
         
         self.temps = {   
-                "ROUTER": 0.0,
-                "RESEARCHER": 0.8,  # 0.8 = More "wit" and conversational flow
+                "ASSISTANT": 0.8,  # 0.8 = More "wit" and conversational flow
                 "CODER": 0.2        # 0.2 = Strict syntax, less "hallucinated" code
         }
 
         self.context_size = {
-            "ROUTER": 2048,
-            "RESEARCHER": 8192,
+            "ASSISTANT": 8192,
             "CODER": 16384
         }
 
@@ -54,17 +51,17 @@ class Controller:
             return f"Error: {e}"
 
 
-    def ask(self, prompt: str, system_prompt=None, intent="RESEARCH") -> str:
+    def ask(self, prompt: str, system_prompt=None, intent="ASSISTANT") -> str:
         """Routes to the specialist model based on intent."""
         # Selection Logic
-        if "CODE" in intent:
+        if intent in ("CODE", "DEBUG"):
             model = self.coder_model
             temp = self.temps["CODER"]
             context = self.context_size["CODER"]
         else:
-            model = self.researcher_model
-            temp = self.temps["RESEARCHER"]
-            context = self.context_size["RESEARCHER"]
+            model = self.assistant_model
+            temp = self.temps["ASSISTANT"]
+            context = self.context_size["ASSISTANT"]
 
         return self._call_ollama(model, prompt, system_prompt, target_temp = temp, target_context = context)
 
@@ -131,38 +128,116 @@ class SemanticController(Controller):
         # Prototype examples for each intent
         self.raw_anchors = {
             "CODE": [
-                # Creation
-                "write", "implement", "create", "build",
-                "generate", "code", "program", "develop", "script",
-                "debug", "fix"
-                # Modification (Crucial for follow-ups!)
-                "make it faster", "refactor this", 
-                "same task",
-                "same thing",
-                "same but",
-                "what about",
-                "now in",
-                "but in",
-                # Debugging
-                "debug error", "fix the bug", "why is it crashing"
+                # Build / create
+                "write code for", "implement", "create a function", "build a script",
+                "generate a class", "produce working code", "give me the code",
+                "write unit tests", "add a feature", "extend this code",
+                # Edit / refactor / optimize
+                "refactor this", "clean this up", "simplify the code",
+                "make it faster", "optimize performance", "reduce memory usage",
+                "add type hints", "convert to async", "handle edge cases",
+                # Convert / port
+                "convert this to typescript", "port to rust", "rewrite in go",
+                "now in python", "now in c++", "now in javascript",
+                # Continue / follow-ups
+                "continue the implementation", "finish the code", "same thing but",
+                "based on the code above", "use the previous code",
             ],
-            "RESEARCH": [
-                # Knowledge
-                "explain concept", "how does this work", "tell me about", "find some information", "search for it"
-                # Conversational / Feedback (The missing link)
-                "thank you",
-                "thanks",
-                "that helps",
-                "that really helps",
-                "nice",
-                "cool",
-                "got it",
-                "makes sense",
-                "i see",
-                "interesting"
-            ]
-        }
 
+            "DEBUG": [
+                # Errors / crashes
+                "it crashes", "error message", "stack trace", "exception thrown",
+                "segmentation fault", "runtime error", "compile error", "linker error",
+                "module not found", "import error", "permission denied",
+                "connection refused", "timeout error",
+                # Diagnose language
+                "debug this", "help me fix", "root cause", "why is this happening",
+                "minimal repro", "steps to reproduce", "patch this",
+                # Common signatures
+                "Traceback (most recent call last)", "SyntaxError", "TypeError",
+                "UnhandledPromiseRejection", "npm ERR", "pip install fails",
+                "docker build failed", "github actions failed",
+            ],
+
+            "TECHNICAL": [
+                # Setup / installation / environment
+                "how do i install", "setup", "configure", "set up the environment",
+                "create virtualenv", "venv", "conda env", "poetry setup",
+                "requirements.txt", "pyproject.toml", "package.json",
+                "npm install", "pnpm", "yarn", "pip install",
+                "build tools", "compiler toolchain", "cmake configure",
+
+                # API setup / auth / integrations
+                "set up an api", "api key", "authentication", "oauth2",
+                "jwt", "bearer token", "refresh token",
+                "cors", "rate limiting", "api gateway",
+                "webhook", "callback url", "ngrok", "reverse proxy",
+                "openapi", "swagger", "postman collection",
+
+                # Frameworks / scaffolding
+                "create a fastapi project", "setup flask", "setup django",
+                "create express app", "nestjs setup",
+                "setup nextjs", "setup react", "vite project",
+                "electron setup", "create a backend", "create a frontend",
+
+                # Infra / deployment / ops
+                "dockerfile", "docker compose", "kubernetes", "helm chart",
+                "deploy to aws", "deploy to gcp", "deploy to azure",
+                "systemd service", "nginx config", "apache config",
+                "github actions", "ci pipeline", "cd pipeline",
+                "environment variables", ".env file", "secrets management",
+
+                # Databases / networking (technical, not pure coding)
+                "connect to postgres", "mysql connection", "mongodb setup",
+                "redis setup", "migrations", "database url",
+                "ports", "firewall", "dns", "ssl certificate", "https setup",
+                "letsencrypt", "domain configuration",
+            ],
+
+            "MATH": [
+                # Core math help
+                "solve this", "simplify", "derive", "prove", "show that",
+                "step by step", "find the derivative", "integrate",
+                "limits", "series", "taylor expansion",
+                "linear algebra", "matrix", "eigenvalues", "eigenvectors",
+                "determinant", "rank", "null space", "svd",
+                "vector space", "basis", "orthogonal", "projection",
+
+                # Discrete / CS math
+                "combinatorics", "permutations", "combinations",
+                "graph theory", "trees", "shortest path",
+                "big o", "time complexity", "recurrence relation",
+                "induction proof", "pigeonhole principle",
+
+                # Probability / stats
+                "probability", "conditional probability", "bayes theorem",
+                "random variable", "expectation", "variance",
+                "distribution", "normal distribution", "bernoulli",
+                "hypothesis testing", "p value", "confidence interval",
+                "regression", "maximum likelihood",
+
+                # Optimization / ML-ish math
+                "gradient descent", "convex", "lagrange multipliers",
+                "loss function", "backpropagation", "jacobian", "hessian",
+            ],
+
+            "WEB": [
+                "search the web for", "look it up", "find sources",
+                "latest update", "current version of", "release notes for",
+                "compare", "benchmarks", "pricing", "requirements",
+                "check official docs", "search github issues",
+            ],
+
+            "ASSISTANT": [
+                # Explanations / planning
+                "explain concept", "teach me", "give an overview",
+                "best practices", "recommendations", "roadmap",
+                "help me decide", "summarize", "make a checklist",
+                # Chat / acknowledgements
+                "thank you", "thanks", "got it", "makes sense",
+                "ok", "okay", "cool", "nice", "interesting",
+            ],
+        }
         # 2. Boot Optimization (Persistence)
         if os.path.exists(self.cache_file):
             print(" [System] Loading semantic anchors from cache...")
@@ -171,7 +246,7 @@ class SemanticController(Controller):
             print(" [System] No cache found. Generating new anchors...")
             self._generate_and_save_anchors()
         
-        self.last_intent = "RESEARCH" # Default context
+        self.last_intent = "ASSISTANT" # Default context
 
     def _get_embeddings(self, input_data):
         """Standardized wrapper for Ollama's /api/embed endpoint."""
@@ -229,7 +304,7 @@ class SemanticController(Controller):
         
         # Calculate similarity scores against our anchor centroids
         scores = {intent: self._cosine_similarity(input_vec, anchor) 
-                  for intent, anchor in self.anchor_vectors.items()}
+                  for intent, anchor in self.anchor_vectors.items()} 
         
         # Find winner
         best_intent = max(scores, key=scores.get)
